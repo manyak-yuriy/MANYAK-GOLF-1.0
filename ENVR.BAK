@@ -1,0 +1,563 @@
+{Yuriy Manyak, KA-23, IASA}
+unit envr;
+
+interface
+const
+   strmaxlen = 30;
+   up_char = $72;
+   down_char = $80;
+   select_char = #13;
+   esc_char = #27;
+
+type
+   TProc = procedure;
+
+   TGraphics = object
+      public
+         constructor Create(x0, y0, _width, _height: integer);
+         procedure Show; virtual;
+         procedure Hide; virtual;
+         procedure GetBuffer; virtual;
+         procedure PutBuffer; virtual;
+         destructor Destroy; virtual;
+      private
+         Buffer: pointer;
+         bufsize: integer;
+         visible: boolean;
+         x, y, height, width: integer;
+   end;
+
+   TButton = object(TGraphics)
+      public
+         constructor Create(x0, y0, _width, _height: integer; const _text: string);
+         function MouseOn(xx, yy: integer): boolean; virtual;
+         procedure GetBuffer; virtual;
+         procedure PutBuffer; virtual;
+         procedure Show; virtual;
+         procedure Hide; virtual;
+         procedure ShowFramed;
+         procedure HideFramed;
+         procedure PutText(color: integer);
+         destructor Destroy; virtual;
+      private
+         text: string[strmaxlen];
+         framed: boolean;
+   end;
+
+   PButton = ^TButton;
+   PMenu = ^TMenu;
+
+   TListNode = ^TListItem;
+
+   TListItem = record
+      Buttonp: PButton;
+      next: TListNode;
+   end;
+
+
+   TButtonList = object
+      private
+         head, tail: TListNode;
+      public
+         constructor Create;
+         procedure Add(Buttonp: PButton);
+         procedure ReMove(index: integer);
+         function GetNode(index: integer): TListNode;
+         destructor Destroy;
+   end;
+
+   TMenu = object(TGraphics)
+      public
+         constructor Create(x0, y0, _width, _height: integer; _title: string);
+         procedure AddButton(x0, y0, _width, _height: integer; _text: string);
+         procedure RemButton(index: integer);
+         procedure Show; virtual;
+         procedure Hide; virtual;
+         function GetBtnPtr(index: integer): PButton;
+         procedure SolveFrame(direction: char; cursorx, cursory: integer);
+         procedure BtnBlink(Btnp: PButton);
+         function CatchClick(cursorx, cursory: integer): integer;
+         function CatchEnter(ch: char): integer;
+         destructor Destroy; virtual;
+      private
+         title: string;
+         btnnumber, selected, newselected: integer;
+         Buttons: TButtonList;
+   end;
+
+implementation
+uses graph, crt, mouse;
+
+const
+   btncolor = green;
+   framedbtncolor = green;
+   hightextcolor = 12;
+   textcolor = black;
+   textsize = 2;
+   btnborder = 15;
+   btnframe = 5;
+   framecolor = red;
+
+   menushift = 10;
+   menubkgrcolor = 7;
+   menubrdrcolor = lightblue;
+   headertxtsize = 2;
+
+   blinktime = 300;
+
+   procedure TMenu.AddButton(x0, y0, _width, _height: integer; _text: string);
+   var
+      Buttonp: PButton;
+   begin
+      inc(btnnumber);
+      Buttonp := new(PButton, Create(x0 + x, y0 + y, _width, _height, _text));
+      Buttons.Add(Buttonp);
+      selected := btnnumber;
+   end;
+
+   function TMenu.GetBtnPtr(index: integer): PButton;
+   var
+      node: TListNode;
+   begin
+      node := Buttons.GetNode(index);
+      if (node <> NIL) then
+         GetBtnPtr := node^.Buttonp
+      else
+         GetBtnPtr := NIL;
+   end;
+
+   procedure TMenu.RemButton(index: integer);
+   begin
+      Buttons.Remove(index);
+   end;
+
+   constructor TMenu.Create(x0, y0, _width, _height: integer; _title: string);
+   begin
+      TGraphics.Create(x0, y0, _width, _height);
+      Buttons.Create;
+      visible := false;
+      title := _title;
+      btnnumber := 0;
+      selected := 0;
+      newselected := 0;
+   end;
+
+   destructor TMenu.Destroy;
+   begin
+      if (Buffer <> NIL) then
+         freemem(Buffer, bufsize);
+   end;
+
+   procedure TMenu.BtnBlink(Btnp: PButton);
+   begin
+      with Btnp^ do
+      begin
+         HideFramed;
+         delay(blinktime);
+         ShowFramed;
+         delay(blinktime);
+         HideFramed;
+         delay(blinktime);
+         ShowFramed;
+       end;
+   end;
+
+   function TMenu.CatchClick(cursorx, cursory: integer): integer;
+   var
+      result: integer;
+      Btnp: PButton;
+   begin
+      {result := 0;
+      for i := 1 to btnnumber do
+      begin
+         Btnp := GetBtnPtr(i);
+         if (Btnp^.MouseOn(cursorx, cursory)) then
+         begin
+            result := i;
+            BtnBlink(Btnp);
+            break;
+         end;
+      end;         }
+      result := selected;
+      Btnp := GetBtnPtr(result);
+      if (Btnp^.MouseOn(cursorx, cursory)) then
+      begin
+         BtnBlink(Btnp);
+         CatchClick :=  selected;
+      end
+      else
+         CatchClick := 0;
+   end;
+
+   function TMenu.CatchEnter(ch: char): integer;
+   var Btnp: PButton;
+   begin
+      if (ch = select_char) and (selected <> 0) then
+      begin
+         Btnp := GetBtnPtr(selected);
+         if Btnp <> NIL then
+            BtnBlink(Btnp);
+         CatchEnter := selected;
+      end
+      else
+         CatchEnter := 0;
+   end;
+
+   procedure TMenu.SolveFrame(direction: char; cursorx, cursory: integer);
+   var
+      i: integer;
+   begin
+      for i := 1 to btnnumber do
+      if GetBtnPtr(i)^.MouseOn(cursorx, cursory) then
+         newselected := i;
+
+      if (newselected = selected) then
+      case direction of
+         up_char:
+         if not (selected in [0, 1]) then
+            newselected := selected - 1
+         else
+            newselected := btnnumber;
+         down_char:
+         if not (selected in [0, btnnumber]) then
+            newselected := selected + 1
+         else
+            newselected := 1;
+      end;
+
+      if (newselected <> selected) then
+      begin
+         if (selected <> 0) then
+         begin
+            GetBtnPtr(selected)^.HideFramed;
+         end;
+         GetBtnPtr(newselected)^.ShowFramed;
+      end;
+      selected := newselected;
+   end;
+
+   procedure TMenu.Show;
+   var
+      i: integer;
+      centerx, centery: integer;
+   begin
+      if (visible) then
+         exit;
+      HideMouse;
+      GetBuffer;
+      setcolor(menubrdrcolor);
+      setfillstyle(9, menubrdrcolor);
+      bar(x, y, x + width, y + height);
+
+      setfillstyle(1, menubkgrcolor);
+      bar(x + menushift, y + 2 * textheight(title) + + menushift,
+                x + width - menushift, y + height - menushift);
+      centerx := x + width div 2;
+      centery := y + textheight(title) + menushift;
+      settextjustify(1, 1);
+      setcolor(textcolor);
+      settextstyle(DefaultFont, 0, headertxtsize);
+      outtextxy(centerx, centery, title);
+
+      for i := 1 to btnnumber do
+         GetBtnPtr(i)^.Show;
+      selected := 1;
+      visible := true;
+      ShowMouse;
+   end;
+
+   procedure TMenu.Hide;
+   var
+      i: integer;
+   begin
+      if visible then
+      begin
+         HideMouse;
+         for i := 1 to btnnumber do
+            GetBtnPtr(i)^.Hide;
+         PutBuffer;
+         ShowMouse;
+      end;
+      visible := false;
+   end;
+
+
+   constructor TButtonList.Create;
+   begin
+      head := NIL;
+      tail := NIL;
+   end;
+
+   function TButtonList.GetNode(index: integer): TListNode;
+   var
+      i: integer;
+      node: TListNode;
+   begin
+      i := 1;
+      node := head;
+      while (i < index) and (node <> NIL) do
+      begin
+         node := node^.next;
+         inc(i);
+      end;
+      if (index < 1) then
+         GetNode := NIL
+      else
+         GetNode := node;
+   end;
+
+   procedure TButtonList.Remove(index: integer);
+   var
+      curr, prev, next: TListNode;
+   begin
+      curr := GetNode(index);
+      next := curr^.next;
+      prev := GetNode(index);
+      if (curr <> NIL) then
+      begin
+         if (prev = NIL) then {curr == head}
+         begin
+            dispose(curr);
+            curr := NIL;
+            head := next;
+         end
+         else
+         if (next = NIL) then {curr == tail}
+         begin
+            dispose(curr);
+            curr := NIL;
+            tail := prev;
+            tail^.next := NIL;
+         end else
+         begin
+            dispose(curr);
+            curr := NIL;
+            prev^.next := next;
+         end;
+      end;
+   end;
+
+   procedure TButtonList.Add(Buttonp: PButton);
+   var
+      node: TListNode;
+   begin
+      new(node);
+      node^.Buttonp := Buttonp;
+      node^.next := NIL;
+      if (head = NIL) then
+      begin
+         head := node;
+         tail := head;
+      end
+      else
+      begin
+         tail^.next := node;
+         tail := node;
+      end;
+   end;
+
+   destructor TButtonList.Destroy;
+   var
+      current, next: TListNode;
+   begin
+      current := head;
+      while (current <> NIL) do
+      begin
+         next := current^.next;
+         dispose(current);
+         current := next;
+      end;
+      head := NIL;
+      tail := NIL;
+   end;
+
+
+   constructor TGraphics.Create;
+   begin
+      x := x0;
+      y := y0;
+      height := _height;
+      width := _width;
+      visible := false;
+   end;
+
+   procedure TGraphics.Show;
+   begin
+
+   end;
+
+   procedure TGraphics.GetBuffer;
+   begin
+      HideMouse;
+      bufsize := ImageSize(x, y, x + width, y + height);
+      getmem(Buffer, bufsize);
+      GetImage(x, y, x + width, y + height, Buffer^);
+      ShowMouse;
+   end;
+
+   procedure TGraphics.PutBuffer;
+   begin
+      if (Buffer <> NIL) then
+      begin
+         PutImage(x, y, Buffer^, 0);
+         freemem(Buffer, bufsize);
+         Buffer := NIL;
+      end;
+   end;
+
+   procedure TGraphics.Hide;
+   begin
+   end;
+
+   destructor TGraphics.Destroy;
+   begin
+      if (Buffer <> NIL) then
+         freemem(Buffer, sizeof(Buffer^));
+   end;
+
+   constructor TButton.Create;
+   begin
+      x := x0;
+      y := y0;
+      settextstyle(DefaultFont, 0, 2);
+      if (_width <= 0) then
+         width := textwidth(_text) + btnborder
+      else width := _width;
+
+      if (_height <= 0) then
+         height := textheight(_text) + btnborder
+      else height := _height;
+      text := _text;
+      visible := false;
+      framed := false;
+      bufsize := 0;
+      Buffer := NIL;
+   end;
+
+   destructor TButton.Destroy;
+   begin
+   end;
+
+   procedure TButton.GetBuffer;
+   begin
+      HideMouse;
+      if (Buffer <> NIL) then
+         freemem(Buffer, bufsize);
+      bufsize := ImageSize(x - btnframe, y - btnframe
+      , x + width + btnframe, y + height + btnframe);
+      getmem(Buffer, bufsize);
+      GetImage(x - btnframe, y - btnframe,
+      x + width + btnframe, y + height + btnframe, Buffer^);
+      ShowMouse;
+   end;
+
+   procedure TButton.PutBuffer;
+   begin
+      if (Buffer <> NIL) then
+      begin
+         PutImage(x - btnframe, y - btnframe, Buffer^, 0);
+         freemem(Buffer, bufsize);
+         Buffer := NIL;
+      end;
+   end;
+
+   procedure TButton.PutText(color: integer);
+   var
+      centerx, centery: integer;
+   begin
+      centerx := x + width div 2;
+      centery := y + height div 2;
+      moveto(centerx, centery);
+      SetTextJustify(1, 1);
+      settextstyle(DefaultFont, 0, 2);
+      setcolor(color);
+      OutText(text);
+   end;
+
+   procedure TButton.Show;
+   begin
+      HideMouse;
+      if not visible then
+      begin
+         GetBuffer;
+         setcolor(btncolor);
+         setfillstyle(9, btncolor);
+         bar(x, y, x + width, y + height);
+         PutText(textcolor);
+         visible := true;
+         framed := false;
+      end;
+      ShowMouse;
+   end;
+
+   procedure TButton.Hide;
+   begin
+      HideMouse;
+      if (visible) then
+      begin
+         PutBuffer;
+         visible := false;
+      end;
+      ShowMouse;
+   end;
+
+   procedure TButton.ShowFramed;
+   begin
+      HideMouse;
+      if (not framed) then
+      begin
+         GetBuffer;
+         setcolor(framedbtncolor);
+         setfillstyle(11, framedbtncolor);
+         bar(x, y, x + width, y + height);
+         PutText(hightextcolor);
+         setcolor(framecolor);
+         rectangle(x - btnframe, y - btnframe,
+         x + width + btnframe, y + height + btnframe);
+      end;
+      framed := true;
+      visible := true;
+      ShowMouse;
+   end;
+
+   procedure TButton.HideFramed;
+   begin
+      HideMouse;
+      if (framed) then
+      begin
+         PutBuffer;
+         framed := false;
+         visible := false;
+      end;
+      ShowMouse;
+   end;
+
+
+   function TButton.MouseOn;
+   begin
+      if (xx >= x) and (xx <= x + width) and
+         (yy >= y) and (yy <= y + height) then
+            MouseOn := true
+      else MouseOn := false;
+   end;
+
+   function Cont: boolean;
+   var
+      ch: char;
+   begin
+      if not keypressed then
+         exit;
+      ch := readkey;
+      if (ch = #13) then
+         cont := false
+      else cont := true;
+   end;
+
+   function WordToStr(a: word): string;
+   var
+      s: string;
+   begin
+      str(a, s);
+      wordtostr := s;
+   end;
+end.
